@@ -1,12 +1,10 @@
-//! compatible = "starfive,jh7110-rtc";
+//! The driver for the StarFive RTC device.
 //!
+//! compatible = "starfive,jh7110-rtc";
 
-use crate::utils::{read_u32, write_u32};
-use crate::{bcd2bin, LowRtcDevice, LowRtcDeviceExt, RtcTime};
-use bit_field::BitField;
+use crate::{bcd2bin, LowRtcDevice, RtcIORegion, RtcTime};
+use alloc::boxed::Box;
 use core::ops::RangeInclusive;
-use preprint::pprintln;
-use time::OffsetDateTime;
 
 // Registers
 const SFT_RTC_CFG: usize = 0x00;
@@ -73,17 +71,17 @@ pub enum RtcHourMode {
 }
 
 pub struct StarFiveRtc {
-    base_addr: usize,
+    region: Box<dyn RtcIORegion>,
     support_time_min: RtcTime,
     support_time_max: RtcTime,
 }
 
 impl StarFiveRtc {
-    pub fn new(base_addr: usize) -> Self {
+    pub fn new(region: Box<dyn RtcIORegion>) -> Self {
         let support_time_min = RtcTime::new(2001, 1, 1, 0, 0, 0);
         let support_time_max = RtcTime::new(2099, 12, 31, 23, 59, 59);
         let rtc = Self {
-            base_addr,
+            region,
             support_time_min,
             support_time_max,
         };
@@ -102,9 +100,7 @@ impl StarFiveRtc {
         // 		rtc_time64_to_tm(srtc->rtc_dev->range_min, &tm);
         // 		sft_rtc_set_time(dev, &tm);
         // 	}
-        pprintln!("enable starfive rtc {}", rtc.is_enabled());
         let mut tm = rtc.read_time_fmt();
-        pprintln!("init time {:?}", tm);
         if tm.year < rtc.support_time_min.year
             || tm.year > rtc.support_time_max.year
             || tm.month < rtc.support_time_min.month
@@ -125,37 +121,31 @@ impl StarFiveRtc {
     }
     /// set the hour mode
     fn set_mode(&self, mode: RtcHourMode) {
-        let cfg = read_u32(self.base_addr + SFT_RTC_CFG);
-        write_u32(
-            self.base_addr + SFT_RTC_CFG,
+        let cfg = self.region.read_at(SFT_RTC_CFG);
+        self.region.write_at(
+            SFT_RTC_CFG,
             cfg | ((mode as u32) << RTC_CFG_HOUR_MODE_SHIFT as u32),
         );
     }
     /// enable or disable the rtc device
     fn set_enabled(&self, enabled: bool) {
-        let mut cfg = read_u32(self.base_addr + SFT_RTC_CFG);
+        let mut cfg = self.region.read_at(SFT_RTC_CFG);
         if enabled {
             cfg |= 1 << RTC_CFG_ENABLE_SHIFT;
         } else {
             cfg &= !(1 << RTC_CFG_ENABLE_SHIFT);
         }
-        write_u32(self.base_addr + SFT_RTC_CFG, cfg);
-        pprintln!(
-            "set_enabled cfg: {}, indeed: {:#b}",
-            cfg,
-            read_u32(self.base_addr + SFT_RTC_CFG)
-        );
+        self.region.write_at(SFT_RTC_CFG, cfg);
     }
 
     fn is_enabled(&self) -> bool {
-        let cfg = read_u32(self.base_addr + SFT_RTC_CFG);
-        pprintln!("is_enabled {:#b}", cfg);
+        let cfg = self.region.read_at(SFT_RTC_CFG);
         (cfg & (1 << RTC_CFG_ENABLE_SHIFT)) != 0
     }
 
     fn read_time_recursively(&self, mut irq_1sec_state_start: bool) -> RtcTime {
-        let time = read_u32(self.base_addr + SFT_RTC_CFG_TIME);
-        let date = read_u32(self.base_addr + SFT_RTC_CFG_DATE);
+        let time = self.region.read_at(SFT_RTC_CFG_TIME);
+        let date = self.region.read_at(SFT_RTC_CFG_DATE);
         let rtc_time = RtcTime {
             year: 100 + bcd2bin!(date.get_bits(DATE_YEAR_MASK)) + 1900,
             month: bcd2bin!(date.get_bits(DATE_MON_MASK) as u8),
@@ -165,12 +155,8 @@ impl StarFiveRtc {
             second: bcd2bin!(time.get_bits(TIME_SEC_MASK) as u8),
         };
         if !irq_1sec_state_start {
-            let irq_1sec_state_end =
-                if read_u32(self.base_addr + SFT_RTC_IRQ_STATUS) & RTC_IRQ_1SEC != 0 {
-                    true
-                } else {
-                    false
-                };
+            let val = self.region.read_at(SFT_RTC_IRQ_STATUS);
+            let irq_1sec_state_end = if val & RTC_IRQ_1SEC != 0 { true } else { false };
             if irq_1sec_state_end {
                 irq_1sec_state_start = true;
                 return self.read_time_recursively(irq_1sec_state_start);
@@ -184,19 +170,12 @@ impl LowRtcDevice for StarFiveRtc {
     fn read_time(&self) -> u64 {
         /* If the RTC is disabled, assume the values are invalid */
         if !self.is_enabled() {
-            pprintln!("rtc is not enabled");
             return 0;
         }
-        let mut irq_1sec_state_start =
-            if read_u32(self.base_addr + SFT_RTC_IRQ_STATUS) & RTC_IRQ_1SEC != 0 {
-                true
-            } else {
-                false
-            };
+        let val = self.region.read_at(SFT_RTC_IRQ_STATUS);
+        let mut irq_1sec_state_start = if val & RTC_IRQ_1SEC != 0 { true } else { false };
         let rtc_time = self.read_time_recursively(irq_1sec_state_start);
-        pprintln!("read_time {:?}", rtc_time);
-        let offset = OffsetDateTime::from(rtc_time);
-        offset.unix_timestamp_nanos() as u64
+        todo!()
     }
 
     fn set_time(&self, time: u64) {
@@ -235,5 +214,3 @@ impl LowRtcDevice for StarFiveRtc {
         todo!()
     }
 }
-
-impl LowRtcDeviceExt for StarFiveRtc {}
