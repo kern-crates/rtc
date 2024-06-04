@@ -1,17 +1,3 @@
-/// Write 4 bytes to the specified address
-pub fn write_u32(addr: usize, val: u32) {
-    let addr = addr as *mut u32;
-    unsafe {
-        addr.write_volatile(val);
-    }
-}
-
-/// Read 4 bytes from the specified address
-pub fn read_u32(addr: usize) -> u32 {
-    let addr = addr as *mut u32;
-    unsafe { addr.read_volatile() }
-}
-
 /// # Example
 /// ```
 /// use rtc::genmask_u32;
