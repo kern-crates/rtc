@@ -1,0 +1,10 @@
+{
+    "name": "rtc",
+    "description": "This repository contains the drivers for the RTC module used in the qemu and starfive2 boards.",
+    "authors": [{
+      "name": "chenlinfeng ",
+      "email": "chenlinfeng25@outlook.com"
+    }],
+    "keywords": ["rtc", "goldfish", "starfive2"],
+    "doc_url": "https://github.com/kern-crates/rtc/blob/main/README.md"
+}
